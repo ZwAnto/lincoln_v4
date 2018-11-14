@@ -14,6 +14,8 @@ from sklearn.cluster import DBSCAN
 from time import sleep
 from collections import Counter
 
+# DATA ###########################################################
+
 tweets_text = load('../data/tweets_clean.pkl')
 tweets = import_json(sample = False, full = True)
 
@@ -73,13 +75,16 @@ tf_idf = tf_idf.fillna(0,axis=1)
 
 # CLUSTERING #####################################################
 
+# TSNE
 tsne = TSNE(n_components=2,
             random_state= 1121993)
 x_tsne = tsne.fit_transform(tf_idf)
 
+# DBSCAN
 dbscan = DBSCAN(eps=2, min_samples=1)
 labels = dbscan.fit(x_tsne).labels_
 
+# PLOTING TSNE
 fig,ax = plt.subplots(figsize=[8,5])
 ax.scatter(x_tsne[:,0],x_tsne[:,1],c=labels)
 for i in set(labels):
@@ -88,23 +93,29 @@ for i in set(labels):
 fig.patch.set_facecolor((250/255,250/255,250/255))
 plt.savefig('../img/tsne.png',facecolor=fig.get_facecolor())
 
+# PLOTING GROUP VS WEEK
 fig,ax = plt.subplots(figsize=[8,5])
 ax.scatter(bow_agg.index.values.astype('datetime64'),
             labels,
             c = labels)
 fig.patch.set_facecolor((250/255,250/255,250/255))
 plt.savefig('../img/hebdo.png',facecolor=fig.get_facecolor())
-    
+
+# DATA FOR HIGHCHART GRAPH #######################################
+
 bow_agg['filter_group'] = labels 
 tf_idf['filter_group'] = labels 
 
 bow_agg['filter_week'] = bow_agg.index.values
 
+# Word density of each group
 worddensity = tf_idf.groupby('filter_group').sum()
 
+# Date range of each gorup
 date_min = bow_agg.groupby('filter_group')['filter_week'].agg(min)
 date_max = bow_agg.groupby('filter_group')['filter_week'].agg(max)
 
+# Number of tweet in each group
 count = bow.groupby('filter_week').size().reset_index(name='counts')
 
 color = ['#1B95E0','#84d0ff']
@@ -126,6 +137,8 @@ series = '[' + ','.join(series) + ']'
 
 save(series,'../data/data.json')
 
+# 10 BEST WORD FOR EACH GROUP ####################################
+
 nlargest = 10
 order = np.argsort(-worddensity.values, axis=1)[:, :nlargest]
 result = pd.DataFrame(worddensity.columns[order], 
@@ -142,46 +155,31 @@ out = '[' + ','.join(out) + ']'
 
 save(out,'../data/group.json')
 
-#### ELASTIC INDEXING ####
+# ELASTIC INDEXING ###############################################
 
 ids = [i['id'] for i in tweets]
 partial_text = [' '.join(set(i)) for i in tweets_text]
+partial_text = pd.DataFrame({'text': partial_text, 'date': date},index=ids)
+partial_text = partial_text.drop_duplicates(subset='text')
 
 from elasticsearch import Elasticsearch
-es = Elasticsearch(hosts='xxxxxx.xxxxx.xxx:80')
-
-tweets_partial = [{'date': str(a),'text': b} for a,b in zip(date,partial_text)]
+es = Elasticsearch(hosts='xxxxxxx:80')
 
 actions = []
-for i in range(len(ids)):    
-    actions.append({'index': {'_index' : 'lincoln_v4_partial_v1','_type' : '_doc','_id' : ids[i]}})
+for i in range(partial_text.shape[0]):    
+    actions.append({'index': {'_index' : 'lincoln_v4_partial_v1','_type' : '_doc','_id' : int(partial_text.index[i]) }})
     actions.append({
-        'date': str(date[i]),
-        'text': partial_text[i]
+        'date': str(partial_text.iloc[i,0]),
+        'text': partial_text.iloc[i,1]
     })
 es.bulk(actions, index = 'lincoln_v4_partial_v1')
-        
-### INDEXING FULL TWEET ###
 
-actions = []
-for i in range(len(ids)):    
-    actions.append({'index': {'_index' : 'lincoln_v4_full_v1','_type' : '_doc','_id' : ids[i]}})
-    actions.append({
-        'date': str(date[i]),
-        'text': tweets[i]['text'],
-        'user_name': tweets[i]['user']['name'],
-        'profile_image_url' : tweets[i]['user']['profile_image_url']
-    })
-es.bulk(actions, index = 'lincoln_v4_full_v1')
-
-
-#### WORDCLOUD ####
+# WORDCLOUD ######################################################
 
 from wordcloud import WordCloud, STOPWORDS, ImageColorGenerator
 from PIL import Image
-
-
 import random
+
 def grey_color_func(word, font_size, position, orientation, random_state=None,
                     **kwargs):
     return "hsl(%d, 100%%, 50%%)" % (random.randint(190, 210))
